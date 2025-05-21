@@ -1,55 +1,72 @@
 import requests
 import pandas as pd
 import yfinance as yf
-from datetime import datetime
+import datetime
 import os
 
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
+def convert_date_format(date_str):
+    """
+    將民國年轉西元年（例如 114/05/21 -> 2025/05/21）
+    """
+    if isinstance(date_str, str) and "/" in date_str:
+        parts = date_str.split("/")
+        if len(parts) == 3 and len(parts[0]) <= 3:  # 民國年
+            year = int(parts[0]) + 1911
+            return f"{year}-{parts[1]}-{parts[2]}"
+    return date_str
 
-def fetch_tsmc_adr():
-    ticker = yf.Ticker("TSM")  # TSMC ADR
-    df = ticker.history(period="200d")
-    df = df[["Close"]].rename(columns={"Close": "ADR_Close"})
-    df.index = pd.to_datetime(df.index.date)
+def fetch_adr():
+    ticker = yf.Ticker("TSM")
+    df = ticker.history(period="max")
+    df = df[["Close"]].reset_index()
+    df.rename(columns={"Close": "ADR_Close", "Date": "Date"}, inplace=True)
+    df["Date"] = df["Date"].dt.date
     return df
 
 def fetch_tw_stock():
-    url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date}&stockNo=2330"
-    all_data = []
-    today = datetime.today()
-    for i in range(7):  # 抓過去 7 個月（約 140 天）
-        month = (today.month - i) % 12 or 12
-        year = today.year if today.month - i > 0 else today.year - 1
-        date_str = f"{year}{month:02}01"
-        resp = requests.get(url.format(date=date_str))
-        data = resp.json()
-        for row in data.get("data", []):
-            date = row[0].replace("/", "-")
-            close = float(row[6].replace(",", ""))
-            all_data.append((date, close))
-    df = pd.DataFrame(all_data, columns=["Date", "TWS_Close"])
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.set_index("Date").sort_index()
+    today = datetime.date.today().strftime("%Y%m%d")
+    url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={today}&stockNo=2330"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(url, headers=headers)
+    raw = r.json()
+
+    df = pd.DataFrame(raw["data"], columns=raw["fields"])
+    df = df.rename(columns={"日期": "Date", "收盤價": "TWS_Close"})
+
+    # 日期轉西元格式
+    df["Date"] = df["Date"].apply(convert_date_format)
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df[["Date", "TWS_Close"]].dropna()
+    df["TWS_Close"] = df["TWS_Close"].str.replace(",", "").astype(float)
+    df["Date"] = df["Date"].dt.date
     return df
 
-def fetch_usdtwd():
-    url = "https://tw.rter.info/capi.php"
-    res = requests.get(url)
-    data = res.json()
-    rate = data["USDTWD"]["Exrate"]
-    df = pd.DataFrame({"USD_TWD": [rate]}, index=[pd.Timestamp.today().normalize()])
+def fetch_usd_twd():
+    ticker = yf.Ticker("TWD=X")
+    df = ticker.history(period="max")
+    df = df[["Close"]].reset_index()
+    df.rename(columns={"Close": "USD_TWD", "Date": "Date"}, inplace=True)
+    df["Date"] = df["Date"].dt.date
     return df
 
 def main():
-    adr_df = fetch_tsmc_adr()
+    print("Fetching ADR...")
+    adr_df = fetch_adr()
+    print("Fetching 台股...")
     tw_df = fetch_tw_stock()
-    fx_df = fetch_usdtwd()
-    df = adr_df.join(tw_df, how="inner")
-    df = df.join(fx_df, how="ffill")
-    df["ADR_TWD"] = df["ADR_Close"] * df["USD_TWD"]
-    df["Premium"] = ((df["ADR_TWD"] / df["TWS_Close"]) - 1) * 100
-    df.to_csv(os.path.join(DATA_DIR, "merged.csv"))
+    print("Fetching 匯率...")
+    fx_df = fetch_usd_twd()
+
+    print("Merging...")
+    df = pd.merge(adr_df, fx_df, on="Date", how="inner")
+    df = pd.merge(df, tw_df, on="Date", how="inner")
+
+    df["Premium"] = ((df["ADR_Close"] * df["USD_TWD"]) / df["TWS_Close"] - 1) * 100
+    df = df.sort_values("Date")
+
+    os.makedirs("data", exist_ok=True)
+    df.to_csv("data/merged.csv", index=False)
+    print("✅ Saved to data/merged.csv")
 
 if __name__ == "__main__":
     main()

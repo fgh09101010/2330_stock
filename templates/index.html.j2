@@ -1,14 +1,29 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-Hant">
 <head>
-    <meta charset="UTF-8">
-    <title>{{ title }}</title>
-    <style>
-        body { font-family: sans-serif; max-width: 960px; margin: auto; padding: 1rem; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }}</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0 1rem;
+      background: #f9f9f9;
+    }
+    h1 {
+      text-align: center;
+    }
+    .plot-container {
+      width: 100%;
+      overflow-x: auto;
+    }
+  </style>
 </head>
 <body>
-    <h1>{{ title }}</h1>
-    {{ plot_html|safe }}
+  <h1>{{ title }}</h1>
+  <div class="plot-container">
+    {{ plot_html | safe }}
+  </div>
 </body>
 </html>
